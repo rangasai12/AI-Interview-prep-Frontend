@@ -1,10 +1,13 @@
-import { useState, useRef } from "react";
-import { ArrowLeft, Upload, Download, FileUp } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertCircle, ArrowLeft, Download, FileText, FileUp, Loader2, Upload } from "lucide-react";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { ResumeEditor, ResumeSection } from "./ResumeEditor";
+import { parseResumeWithGemini } from "../lib/resumeParser";
+import { downloadResumePdfServer } from "../lib/pdfExport";
+import { getStoredResumeSections, setStoredResumeSections } from "../lib/resumeStore";
 
 interface ResumePageProps {
   onBack: () => void;
@@ -19,7 +22,7 @@ const initialResume: ResumeSection[] = [
   {
     id: "experience",
     title: "Work Experience",
-    content: "Software Engineer at TechCo (2020-Present)\n• Built responsive web applications using React and TypeScript\n• Collaborated with cross-functional teams to deliver features\n• Implemented UI components following design specifications"
+    content: "Software Engineer at TechCo (2020-Present)\n- Built responsive web applications using React and TypeScript\n- Collaborated with cross-functional teams to deliver features\n- Implemented UI components following design specifications"
   },
   {
     id: "skills",
@@ -34,59 +37,156 @@ const initialResume: ResumeSection[] = [
 ];
 
 export function ResumePage({ onBack }: ResumePageProps) {
-  const [resumeSections, setResumeSections] = useState<ResumeSection[]>(initialResume);
+  const [resumeSections, setResumeSections] = useState<ResumeSection[]>(() => getStoredResumeSections() || initialResume);
+  // Persist on change
+  useEffect(() => {
+    setStoredResumeSections(resumeSections);
+  }, [resumeSections]);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [uploadText, setUploadText] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string>("");
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetUploadState = () => {
+    setUploadText("");
+    setUploadedFileName("");
+    setUploadedFile(null);
+    setParseError(null);
+    const input = fileInputRef.current;
+    if (input) {
+      input.value = "";
+    }
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
+    setUploadedFile(file);
     setUploadedFileName(file.name);
+    setParseError(null);
 
-    // Read file content
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setUploadText(content);
-    };
-    reader.readAsText(file);
+    if (file.type.startsWith("text/") || file.type === "application/json") {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        if (content) {
+          setUploadText(content);
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      setUploadText("");
+    }
   };
 
-  const handleUploadResume = () => {
-    if (!uploadText.trim()) return;
-
-    // Simple parsing - in real app, would parse structured resume
-    const sections = uploadText.split('\n\n').filter(s => s.trim());
-    if (sections.length > 0) {
-      setResumeSections([
-        {
-          id: "imported",
-          title: "Imported Resume",
-          content: uploadText
-        }
-      ]);
+  const handleUploadResume = async () => {
+    if (!uploadedFile && !uploadText.trim()) {
+      setParseError("Upload a file or paste your resume text before submitting.");
+      return;
     }
-    setUploadDialogOpen(false);
-    setUploadText("");
-    setUploadedFileName("");
+
+    setIsSubmitting(true);
+    setParseError(null);
+
+    try {
+      const { sections, profile } = await parseResumeWithGemini({
+        file: uploadedFile ?? undefined,
+        text: uploadText.trim() ? uploadText : undefined,
+      });
+
+      if (!sections.length) {
+        throw new Error("The AI parser did not return any resume sections.");
+      }
+
+      const mapped = sections.map((section) => ({
+        id: section.id,
+        title: section.title,
+        content: section.content,
+      }));
+
+      // If profile data is available, create/update a Contact section at the top
+      if (profile) {
+        const lines: string[] = [];
+        if (profile.name) lines.push(profile.name);
+        if (profile.title) lines.push(profile.title);
+
+        const contacts: string[] = [];
+        if (profile.email) contacts.push(`Email: ${profile.email}`);
+        if (profile.phone) contacts.push(`Phone: ${profile.phone}`);
+        if (profile.location) contacts.push(`Location: ${profile.location}`);
+        if (profile.links?.linkedin) contacts.push(`LinkedIn: ${profile.links.linkedin}`);
+        if (profile.links?.github) contacts.push(`GitHub: ${profile.links.github}`);
+        if (profile.links?.website) contacts.push(`Website: ${profile.links.website}`);
+
+        const contactContent = [
+          lines.join(" \u2022 "), // name • title on one line
+          contacts.join(" \n"),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+
+        const contactSection = {
+          id: "contact",
+          title: "Contact",
+          content: contactContent,
+        } as const;
+
+        const existingIdx = mapped.findIndex((s) => s.id === "contact" || s.title.toLowerCase() === "contact");
+        if (existingIdx >= 0) {
+          mapped[existingIdx] = { ...mapped[existingIdx], ...contactSection };
+        } else {
+          mapped.unshift({ ...contactSection });
+        }
+      }
+
+  setResumeSections(mapped);
+
+      setUploadDialogOpen(false);
+      resetUploadState();
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Failed to parse resume. Please try again.";
+      setParseError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDownload = () => {
     const resumeText = resumeSections
       .map(section => `${section.title.toUpperCase()}\n${section.content}`)
-      .join('\n\n');
-    
-    const blob = new Blob([resumeText], { type: 'text/plain' });
+      .join("\n\n");
+
+    const blob = new Blob([resumeText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = 'resume.txt';
+    a.download = "resume.txt";
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const handleDownloadPdf = () => {
+    let profile: any = undefined;
+    try {
+      const stored = localStorage.getItem("profile");
+      if (stored) profile = JSON.parse(stored);
+    } catch {}
+    downloadResumePdfServer(
+      resumeSections.map((s) => ({ title: s.title, content: s.content })),
+      profile,
+      "resume.pdf"
+    ).catch((e) => alert(e.message));
+  };
+
+  const isSubmitDisabled = isSubmitting || (!uploadedFile && !uploadText.trim());
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -105,7 +205,11 @@ export function ResumePage({ onBack }: ResumePageProps) {
               </Button>
               <Button variant="outline" onClick={handleDownload}>
                 <Download className="w-4 h-4 mr-2" />
-                Download
+                Download TXT
+              </Button>
+              <Button onClick={handleDownloadPdf}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PDF
               </Button>
             </div>
           </div>
@@ -122,14 +226,22 @@ export function ResumePage({ onBack }: ResumePageProps) {
         </div>
 
         {/* Resume Editor */}
-        <ResumeEditor 
+        <ResumeEditor
           sections={resumeSections}
           onSectionsChange={setResumeSections}
         />
       </div>
 
       {/* Upload Dialog */}
-      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+      <Dialog
+        open={uploadDialogOpen}
+        onOpenChange={(open) => {
+          setUploadDialogOpen(open);
+          if (!open) {
+            resetUploadState();
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Upload Resume</DialogTitle>
@@ -149,8 +261,8 @@ export function ResumePage({ onBack }: ResumePageProps) {
                   onChange={handleFileUpload}
                   className="hidden"
                 />
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => fileInputRef.current?.click()}
                   className="w-full"
                 >
@@ -183,22 +295,38 @@ export function ResumePage({ onBack }: ResumePageProps) {
               />
             </div>
 
+            {parseError && (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 h-4 w-4" />
+                <span>{parseError}</span>
+              </div>
+            )}
+
             <div className="flex gap-2">
-              <Button 
-                onClick={handleUploadResume} 
+              <Button
+                onClick={handleUploadResume}
                 className="flex-1"
-                disabled={!uploadText.trim()}
+                disabled={isSubmitDisabled}
               >
-                <Upload className="w-4 h-4 mr-2" />
-                Submit Resume
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Parsing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Submit Resume
+                  </>
+                )}
               </Button>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => {
                   setUploadDialogOpen(false);
-                  setUploadText("");
-                  setUploadedFileName("");
+                  resetUploadState();
                 }}
+                disabled={isSubmitting}
               >
                 Cancel
               </Button>
@@ -209,3 +337,4 @@ export function ResumePage({ onBack }: ResumePageProps) {
     </div>
   );
 }
+

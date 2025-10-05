@@ -6,6 +6,7 @@ import { Textarea } from "./ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { improveSectionWithGemini } from "../lib/resumeImprove";
 
 export interface ResumeSection {
   id: string;
@@ -18,9 +19,10 @@ interface ResumeEditorProps {
   sections: ResumeSection[];
   onSectionsChange: (sections: ResumeSection[]) => void;
   jobTitle?: string; // Optional - used to tailor AI suggestions for specific job
+  jobDescription?: string; // Optional - additional context; must not cause fabrication
 }
 
-export function ResumeEditor({ sections, onSectionsChange, jobTitle }: ResumeEditorProps) {
+export function ResumeEditor({ sections, onSectionsChange, jobTitle, jobDescription }: ResumeEditorProps) {
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
@@ -49,36 +51,35 @@ export function ResumeEditor({ sections, onSectionsChange, jobTitle }: ResumeEdi
     setEditContent("");
   };
 
-  const handleAiImprove = (sectionId: string) => {
+  const handleAiImprove = async (sectionId: string) => {
     const section = sections.find(s => s.id === sectionId);
     if (!section) return;
 
     setCurrentAiSection(sectionId);
     setIsGenerating(true);
-
-    // Simulate AI generation
-    setTimeout(() => {
-      const improvements: Record<string, string> = {
-        summary: jobTitle 
-          ? `Results-driven Software Engineer with 5+ years of expertise in full-stack web development, perfectly aligned for the ${jobTitle} role. Proven track record of building scalable applications serving 1M+ users. Specialized in React, TypeScript, and modern web technologies with a passion for creating intuitive, high-performance user experiences that match the requirements of this position.`
-          : "Results-driven Software Engineer with 5+ years of expertise in full-stack web development. Proven track record of building scalable applications serving 1M+ users. Specialized in React, TypeScript, and modern web technologies with a passion for creating intuitive, high-performance user experiences.",
-        experience: jobTitle
-          ? `Senior Software Engineer | TechCo | 2020-Present\n• Architected and developed 15+ responsive web applications using React and TypeScript, improving user engagement by 40% - directly relevant to ${jobTitle} requirements\n• Led cross-functional agile teams of 5-8 members to deliver mission-critical features on schedule\n• Implemented reusable UI component library reducing development time by 30%\n• Mentored 3 junior developers and established coding best practices\n• Delivered features matching the tech stack and requirements for ${jobTitle} positions`
-          : "Senior Software Engineer | TechCo | 2020-Present\n• Architected and developed 15+ responsive web applications using React and TypeScript, improving user engagement by 40%\n• Led cross-functional agile teams of 5-8 members to deliver mission-critical features on schedule\n• Implemented reusable UI component library reducing development time by 30%\n• Mentored 3 junior developers and established coding best practices",
-        skills: "Frontend: React (Expert), TypeScript (Advanced), Next.js, Redux, Tailwind CSS\nBackend: Node.js, Express, REST APIs\nTools & Other: Git, CI/CD, Testing (Jest, RTL), Agile/Scrum, Web Performance Optimization",
-        education: "Bachelor of Science in Computer Science | GPA: 3.8/4.0\nUniversity of Technology | 2015-2019\nRelevant Coursework: Data Structures, Algorithms, Web Development, Database Systems"
-      };
+    try {
+      const { improved } = await improveSectionWithGemini({
+        title: section.title,
+        content: section.content,
+        jobTitle,
+        jobDescription,
+      });
 
       onSectionsChange(
-        sections.map(section =>
-          section.id === sectionId
-            ? { ...section, aiSuggestion: improvements[sectionId] || section.content }
-            : section
+        sections.map(s =>
+          s.id === sectionId
+            ? { ...s, aiSuggestion: improved }
+            : s
         )
       );
-      setIsGenerating(false);
       setAiDialogOpen(true);
-    }, 2000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to generate improvement.";
+      // Minimal UX for errors; could switch to a toast if available
+      alert(message);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleAcceptAiSuggestion = () => {
@@ -198,7 +199,7 @@ export function ResumeEditor({ sections, onSectionsChange, jobTitle }: ResumeEdi
 
       {/* AI Suggestion Dialog */}
       <Dialog open={aiDialogOpen} onOpenChange={setAiDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>AI Improvement Suggestion</DialogTitle>
             <DialogDescription>
@@ -218,25 +219,25 @@ export function ResumeEditor({ sections, onSectionsChange, jobTitle }: ResumeEdi
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label className="mb-2 block">Original</Label>
-                  <div className="bg-muted rounded-lg p-4 min-h-[200px] whitespace-pre-line text-sm">
+                  <div className="bg-muted rounded-lg p-4 min-h-[200px] max-h-[50vh] overflow-auto whitespace-pre-line break-words text-sm">
                     {currentOriginalContent}
                   </div>
                 </div>
                 <div>
                   <Label className="mb-2 block">AI Improved</Label>
-                  <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 min-h-[200px] whitespace-pre-line text-sm">
+                  <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 min-h-[200px] max-h-[50vh] overflow-auto whitespace-pre-line break-words text-sm">
                     {currentAiSuggestion}
                   </div>
                 </div>
               </div>
             </TabsContent>
             <TabsContent value="original">
-              <div className="bg-muted rounded-lg p-4 min-h-[300px] whitespace-pre-line">
+              <div className="bg-muted rounded-lg p-4 min-h-[300px] max-h-[60vh] overflow-auto whitespace-pre-line break-words">
                 {currentOriginalContent}
               </div>
             </TabsContent>
             <TabsContent value="improved">
-              <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 min-h-[300px] whitespace-pre-line">
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 min-h-[300px] max-h-[60vh] overflow-auto whitespace-pre-line break-words">
                 {currentAiSuggestion}
               </div>
             </TabsContent>
