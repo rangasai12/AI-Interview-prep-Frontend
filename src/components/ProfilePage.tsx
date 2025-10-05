@@ -22,19 +22,44 @@ interface UserProfile {
 
 export function ProfilePage({ onBack, onEditResume }: ProfilePageProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [profile, setProfile] = useState<UserProfile>({
-    name: "Alex Johnson",
-    email: "alex.johnson@email.com",
-    phone: "+1 (555) 123-4567",
-    location: "San Francisco, CA",
-    title: "Software Engineer",
-    bio: "Passionate software engineer with 5+ years of experience building web applications. Specialized in React and TypeScript."
+  const [profile, setProfile] = useState<UserProfile>(() => {
+    try {
+      const stored = localStorage.getItem("profile");
+      if (stored) {
+        const p = JSON.parse(stored);
+        return {
+          name: p?.name || "",
+          email: p?.email || "",
+          phone: p?.phone || "",
+          location: p?.location || "",
+          title: p?.title || "",
+          bio: "",
+        } as UserProfile;
+      }
+    } catch {}
+    return {
+      name: "Alex Johnson",
+      email: "alex.johnson@email.com",
+      phone: "+1 (555) 123-4567",
+      location: "San Francisco, CA",
+      title: "Software Engineer",
+      bio: "Passionate software engineer with 5+ years of experience building web applications. Specialized in React and TypeScript.",
+    } as UserProfile;
   });
 
   const [editedProfile, setEditedProfile] = useState<UserProfile>(profile);
 
   const handleSave = () => {
     setProfile(editedProfile);
+    try {
+      localStorage.setItem("profile", JSON.stringify({
+        name: editedProfile.name,
+        email: editedProfile.email,
+        phone: editedProfile.phone,
+        location: editedProfile.location,
+        title: editedProfile.title,
+      }));
+    } catch {}
     setIsEditing(false);
   };
 

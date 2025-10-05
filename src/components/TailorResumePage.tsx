@@ -1,11 +1,18 @@
-import { useState } from "react";
-import { ArrowLeft, Download, Sparkles, Briefcase, MapPin } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, Download, Sparkles, Briefcase, MapPin, Upload, FileUp, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { ResumeEditor, ResumeSection } from "./ResumeEditor";
 import { ScrollArea } from "./ui/scroll-area";
 import { Separator } from "./ui/separator";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
+import { parseResumeWithGemini } from "../lib/resumeParser";
+import { improveSectionWithGemini } from "../lib/resumeImprove";
+import { downloadResumePdfServer } from "../lib/pdfExport";
+import { getStoredResumeSections, setStoredResumeSections } from "../lib/resumeStore";
 
 interface TailorResumePageProps {
   jobId: string;
@@ -71,40 +78,121 @@ const initialSections: ResumeSection[] = [
 
 export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
   const job = jobDetails[jobId] || jobDetails["1"];
-  const [sections, setSections] = useState<ResumeSection[]>(initialSections);
+  const [sections, setSections] = useState<ResumeSection[]>(() => getStoredResumeSections() || initialSections);
   const [isTailoring, setIsTailoring] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [uploadText, setUploadText] = useState("");
+  const [uploadedFileName, setUploadedFileName] = useState<string>("");
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleAutoTailor = () => {
+  useEffect(() => {
+    setStoredResumeSections(sections);
+  }, [sections]);
+
+  const resetUploadState = () => {
+    setUploadText("");
+    setUploadedFileName("");
+    setUploadedFile(null);
+    setParseError(null);
+    const input = fileInputRef.current;
+    if (input) input.value = "";
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFile(file);
+    setUploadedFileName(file.name);
+    setParseError(null);
+    if (file.type.startsWith("text/") || file.type === "application/json") {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        if (content) setUploadText(content);
+      };
+      reader.readAsText(file);
+    } else {
+      setUploadText("");
+    }
+  };
+
+  const handleUploadResume = async () => {
+    if (!uploadedFile && !uploadText.trim()) {
+      setParseError("Upload a file or paste your resume text before submitting.");
+      return;
+    }
+    setIsSubmitting(true);
+    setParseError(null);
+    try {
+      const { sections: parsedSections, profile } = await parseResumeWithGemini({
+        file: uploadedFile ?? undefined,
+        text: uploadText.trim() ? uploadText : undefined,
+      });
+      if (!parsedSections.length) throw new Error("The AI parser did not return any resume sections.");
+
+      const mapped = parsedSections.map((section) => ({
+        id: section.id,
+        title: section.title,
+        content: section.content,
+      }));
+
+      if (profile) {
+        const lines: string[] = [];
+        if (profile.name) lines.push(profile.name);
+        if (profile.title) lines.push(profile.title);
+        const contacts: string[] = [];
+        if (profile.email) contacts.push(`Email: ${profile.email}`);
+        if (profile.phone) contacts.push(`Phone: ${profile.phone}`);
+        if (profile.location) contacts.push(`Location: ${profile.location}`);
+        if (profile.links?.linkedin) contacts.push(`LinkedIn: ${profile.links.linkedin}`);
+        if (profile.links?.github) contacts.push(`GitHub: ${profile.links.github}`);
+        if (profile.links?.website) contacts.push(`Website: ${profile.links.website}`);
+        const contactContent = [
+          lines.join(" \u2022 "),
+          contacts.join(" \n"),
+        ].filter(Boolean).join("\n\n");
+        const contactSection = { id: "contact", title: "Contact", content: contactContent } as const;
+        const existingIdx = mapped.findIndex((s) => s.id === "contact" || s.title.toLowerCase() === "contact");
+        if (existingIdx >= 0) mapped[existingIdx] = { ...mapped[existingIdx], ...contactSection };
+        else mapped.unshift({ ...contactSection });
+      }
+
+      setSections(mapped);
+      setUploadDialogOpen(false);
+      resetUploadState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to parse resume. Please try again.";
+      setParseError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAutoTailor = async () => {
     setIsTailoring(true);
-    
-    // Simulate AI tailoring all sections
-    setTimeout(() => {
-      const tailoredSections: ResumeSection[] = [
-        {
-          id: "summary",
-          title: "Professional Summary",
-          content: `Senior Software Engineer with 5+ years of expertise in modern web development, specifically aligned with ${job.title} requirements at ${job.company}. Proven track record of building scalable React applications serving 1M+ users. Specialized in ${job.skills.slice(0, 3).join(", ")} with a passion for creating intuitive, high-performance user experiences. Ready to contribute immediately to ${job.company}'s mission.`
-        },
-        {
-          id: "experience",
-          title: "Work Experience",
-          content: `Senior Software Engineer | TechCo | 2020-Present\n• Architected and developed 15+ responsive web applications using ${job.skills[0]} and ${job.skills[1]}, improving user engagement by 40%\n• Led cross-functional agile teams of 5-8 members to deliver mission-critical features matching ${job.title} requirements\n• Implemented reusable UI component library using ${job.skills[2] || "modern CSS"}, reducing development time by 30%\n• Mentored 3 junior developers and established coding best practices\n• Optimized web performance achieving 90+ Lighthouse scores, directly applicable to ${job.company}'s needs\n\nFrontend Developer | WebSolutions | 2018-2020\n• Built and maintained client-facing applications using ${job.skills[0]} ecosystem\n• Collaborated with UX designers to implement pixel-perfect interfaces\n• Integrated ${job.skills.includes("Redux") ? "Redux" : "state management"} for complex application state`
-        },
-        {
-          id: "skills",
-          title: "Technical Skills",
-          content: `Core Technologies: ${job.skills.join(", ")}\nFrontend: React (Expert), TypeScript (Advanced), JavaScript (ES6+), HTML5, CSS3\nFrameworks & Libraries: ${job.skills.filter(s => s !== "React" && s !== "TypeScript").join(", ")}, Jest, React Testing Library\nTools & Practices: Git, CI/CD, Agile/Scrum, Web Performance Optimization, Responsive Design\nAdditional: RESTful APIs, Webpack, Babel, npm/yarn`
-        },
-        {
-          id: "education",
-          title: "Education & Certifications",
-          content: "Bachelor of Science in Computer Science | GPA: 3.8/4.0\nUniversity of Technology | 2015-2019\nRelevant Coursework: Data Structures, Algorithms, Web Development, Database Systems, Software Engineering\n\nCertifications:\n• Advanced React Patterns (2023)\n• TypeScript Deep Dive (2022)"
+    try {
+      const updated: ResumeSection[] = [];
+      for (const s of sections) {
+        try {
+          const { improved } = await improveSectionWithGemini({
+            title: s.title,
+            content: s.content,
+            jobTitle: job.title,
+            jobDescription: job.description,
+          });
+          updated.push({ ...s, content: improved });
+        } catch (e) {
+          // If one section fails, keep the original content and continue
+          updated.push(s);
         }
-      ];
-      
-      setSections(tailoredSections);
+      }
+      setSections(updated);
+    } finally {
       setIsTailoring(false);
-    }, 2500);
+    }
   };
 
   const handleDownload = () => {
@@ -121,6 +209,21 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadPdf = () => {
+    let profile: any = undefined;
+    try {
+      const stored = localStorage.getItem("profile");
+      if (stored) profile = JSON.parse(stored);
+    } catch {}
+    const safe = (s: string) => s.replace(/[^a-z0-9-_]+/gi, "-").replace(/-+/g, "-").replace(/(^-|-$)/g, "").toLowerCase();
+    const fileName = `resume-${safe(job.company)}-${safe(job.title)}.pdf`;
+    downloadResumePdfServer(
+      sections.map((s) => ({ title: s.title, content: s.content })),
+      profile,
+      fileName
+    ).catch((e) => alert(e.message));
+  };
+
   return (
     <div className="min-h-screen bg-muted/30">
       {/* Top Navigation */}
@@ -132,6 +235,10 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
               Back to Job
             </Button>
             <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Resume
+              </Button>
               <Button 
                 onClick={handleAutoTailor}
                 disabled={isTailoring}
@@ -141,7 +248,11 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
               </Button>
               <Button variant="outline" onClick={handleDownload}>
                 <Download className="w-4 h-4 mr-2" />
-                Download
+                Download TXT
+              </Button>
+              <Button onClick={handleDownloadPdf}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PDF
               </Button>
             </div>
           </div>
@@ -248,10 +359,112 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
               sections={sections}
               onSectionsChange={setSections}
               jobTitle={job.title}
+              jobDescription={job.description}
             />
           </div>
         </div>
       </div>
+
+      {/* Upload Dialog */}
+      <Dialog
+        open={uploadDialogOpen}
+        onOpenChange={(open) => {
+          setUploadDialogOpen(open);
+          if (!open) resetUploadState();
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Upload Resume</DialogTitle>
+            <DialogDescription>
+              Upload a file or paste your resume text below
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* File Upload */}
+            <div>
+              <Label>Upload from File</Label>
+              <div className="mt-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt,.pdf,.doc,.docx"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full"
+                >
+                  <FileUp className="w-4 h-4 mr-2" />
+                  {uploadedFileName || "Choose File"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">
+                  Or paste text
+                </span>
+              </div>
+            </div>
+
+            {/* Text Paste */}
+            <div>
+              <Label htmlFor="resume-upload-tailor">Resume Content</Label>
+              <Textarea
+                id="resume-upload-tailor"
+                value={uploadText}
+                onChange={(e) => setUploadText(e.target.value)}
+                className="min-h-[300px] mt-2 font-mono text-sm"
+                placeholder="Paste your resume content here..."
+              />
+            </div>
+
+            {parseError && (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 h-4 w-4" />
+                <span>{parseError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                onClick={handleUploadResume}
+                className="flex-1"
+                disabled={isSubmitting || (!uploadedFile && !uploadText.trim())}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Parsing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Submit Resume
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setUploadDialogOpen(false);
+                  resetUploadState();
+                }}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, Download, FileText, FileUp, Loader2, Upload } from "lucide-react";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -6,6 +6,8 @@ import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { ResumeEditor, ResumeSection } from "./ResumeEditor";
 import { parseResumeWithGemini } from "../lib/resumeParser";
+import { downloadResumePdfServer } from "../lib/pdfExport";
+import { getStoredResumeSections, setStoredResumeSections } from "../lib/resumeStore";
 
 interface ResumePageProps {
   onBack: () => void;
@@ -35,7 +37,11 @@ const initialResume: ResumeSection[] = [
 ];
 
 export function ResumePage({ onBack }: ResumePageProps) {
-  const [resumeSections, setResumeSections] = useState<ResumeSection[]>(initialResume);
+  const [resumeSections, setResumeSections] = useState<ResumeSection[]>(() => getStoredResumeSections() || initialResume);
+  // Persist on change
+  useEffect(() => {
+    setStoredResumeSections(resumeSections);
+  }, [resumeSections]);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [uploadText, setUploadText] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string>("");
@@ -89,7 +95,7 @@ export function ResumePage({ onBack }: ResumePageProps) {
     setParseError(null);
 
     try {
-      const { sections } = await parseResumeWithGemini({
+      const { sections, profile } = await parseResumeWithGemini({
         file: uploadedFile ?? undefined,
         text: uploadText.trim() ? uploadText : undefined,
       });
@@ -98,11 +104,48 @@ export function ResumePage({ onBack }: ResumePageProps) {
         throw new Error("The AI parser did not return any resume sections.");
       }
 
-      setResumeSections(sections.map((section) => ({
+      const mapped = sections.map((section) => ({
         id: section.id,
         title: section.title,
         content: section.content,
-      })));
+      }));
+
+      // If profile data is available, create/update a Contact section at the top
+      if (profile) {
+        const lines: string[] = [];
+        if (profile.name) lines.push(profile.name);
+        if (profile.title) lines.push(profile.title);
+
+        const contacts: string[] = [];
+        if (profile.email) contacts.push(`Email: ${profile.email}`);
+        if (profile.phone) contacts.push(`Phone: ${profile.phone}`);
+        if (profile.location) contacts.push(`Location: ${profile.location}`);
+        if (profile.links?.linkedin) contacts.push(`LinkedIn: ${profile.links.linkedin}`);
+        if (profile.links?.github) contacts.push(`GitHub: ${profile.links.github}`);
+        if (profile.links?.website) contacts.push(`Website: ${profile.links.website}`);
+
+        const contactContent = [
+          lines.join(" \u2022 "), // name • title on one line
+          contacts.join(" \n"),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+
+        const contactSection = {
+          id: "contact",
+          title: "Contact",
+          content: contactContent,
+        } as const;
+
+        const existingIdx = mapped.findIndex((s) => s.id === "contact" || s.title.toLowerCase() === "contact");
+        if (existingIdx >= 0) {
+          mapped[existingIdx] = { ...mapped[existingIdx], ...contactSection };
+        } else {
+          mapped.unshift({ ...contactSection });
+        }
+      }
+
+  setResumeSections(mapped);
 
       setUploadDialogOpen(false);
       resetUploadState();
@@ -130,6 +173,19 @@ export function ResumePage({ onBack }: ResumePageProps) {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadPdf = () => {
+    let profile: any = undefined;
+    try {
+      const stored = localStorage.getItem("profile");
+      if (stored) profile = JSON.parse(stored);
+    } catch {}
+    downloadResumePdfServer(
+      resumeSections.map((s) => ({ title: s.title, content: s.content })),
+      profile,
+      "resume.pdf"
+    ).catch((e) => alert(e.message));
+  };
+
   const isSubmitDisabled = isSubmitting || (!uploadedFile && !uploadText.trim());
 
   return (
@@ -149,7 +205,11 @@ export function ResumePage({ onBack }: ResumePageProps) {
               </Button>
               <Button variant="outline" onClick={handleDownload}>
                 <Download className="w-4 h-4 mr-2" />
-                Download
+                Download TXT
+              </Button>
+              <Button onClick={handleDownloadPdf}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PDF
               </Button>
             </div>
           </div>

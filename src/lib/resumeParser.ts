@@ -11,6 +11,18 @@ interface ParseResumeOptions {
 
 interface ParseResumeResponse {
   sections: ParsedResumeSection[];
+  profile?: {
+    name: string;
+    email: string;
+    phone: string;
+    location: string;
+    title: string;
+    links?: {
+      linkedin?: string;
+      github?: string;
+      website?: string;
+    }
+  };
 }
 
 export async function parseResumeWithGemini(options: ParseResumeOptions): Promise<ParseResumeResponse> {
@@ -52,5 +64,16 @@ export async function parseResumeWithGemini(options: ParseResumeOptions): Promis
     throw new Error("Invalid data returned from the resume parser.");
   }
 
-  return payload as ParseResumeResponse;
+  const result = payload as ParseResumeResponse;
+
+  // Optional: persist profile in localStorage for Profile page initialization
+  try {
+    if (result.profile) {
+      localStorage.setItem("profile", JSON.stringify(result.profile));
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  return result;
 }

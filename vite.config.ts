@@ -53,7 +53,8 @@ export default defineConfig({
     outDir: 'build',
   },
   server: {
-    port: 4000,
+    // Use a different port than the API server to avoid proxy loops
+    port: 5173,
     open: true,
     proxy: {
       '/api': {
