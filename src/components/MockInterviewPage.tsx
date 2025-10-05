@@ -149,7 +149,7 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
     }
     // Reset question timer and interaction state
     setQuestionTime(0);
-    setInteractionTimeout(30);
+    setInteractionTimeout(60);
     setHasInteracted(false);
 
     // Start question timer
