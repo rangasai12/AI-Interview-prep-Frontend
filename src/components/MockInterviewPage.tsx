@@ -71,12 +71,14 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
   const [questionTime, setQuestionTime] = useState(0); // Time spent on current question
   const [interactionTimeout, setInteractionTimeout] = useState(30); // Seconds before auto-skip
   const [hasInteracted, setHasInteracted] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
 
   const totalTimerRef = useRef<NodeJS.Timeout>();
   const questionTimerRef = useRef<NodeJS.Timeout>();
   const interactionTimerRef = useRef<NodeJS.Timeout>();
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsObjectUrlRef = useRef<string | null>(null);
+  const finishedRef = useRef<boolean>(false);
 
   // Get current question from API data or fallback
   const currentQuestion = interviewData?.questions[currentQuestionIndex] || {
@@ -142,6 +144,9 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
 
   // Per-question timer and interaction timeout
   useEffect(() => {
+    if (finishedRef.current || isFinishing) {
+      return;
+    }
     // Reset question timer and interaction state
     setQuestionTime(0);
     setInteractionTimeout(30);
@@ -154,6 +159,7 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
 
     // Start interaction timeout
     interactionTimerRef.current = setInterval(() => {
+      if (finishedRef.current || isFinishing) return;
       setInteractionTimeout(prev => {
         if (prev <= 1 && !hasInteracted) {
           // Auto-skip if no interaction
@@ -187,6 +193,7 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
   }, []);
 
   const speakQuestion = async (text: string) => {
+    if (finishedRef.current || isFinishing) return;
     if (!text || text === "Loading question...") return;
     // Stop any existing playback and cleanup
     if (ttsAudioRef.current) {
@@ -228,11 +235,12 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
 
   // Read the question aloud when a new question is shown
   useEffect(() => {
+    if (finishedRef.current || isFinishing) return;
     if (currentQuestion && currentQuestion.text) {
       speakQuestion(currentQuestion.text);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentQuestionIndex, interviewData?.questions]);
+  }, [currentQuestionIndex, interviewData?.questions, isFinishing]);
 
   // Cleanup audio recording on unmount
   useEffect(() => {
@@ -254,6 +262,7 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
   }, [currentQuestionIndex, currentQuestion]);
 
   const handleNext = () => {
+    if (finishedRef.current) return;
     // Stop any ongoing recording
     if (isRecordingAudio) {
       stopAudioRecording();
@@ -267,12 +276,12 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
       setCodeAnswer("");
       setTranscribedText("");
     } else {
-      // Submit scores payload before completing
-      submitScores().finally(() => onComplete(jobId));
+      finishInterview(false);
     }
   };
 
   const handleSkip = () => {
+    if (finishedRef.current) return;
     // On skip, clear the current question response then move next
     persistCurrentUserResponse(true);
 
@@ -282,8 +291,46 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
       setCodeAnswer("");
       setTranscribedText("");
     } else {
-      submitScores().finally(() => onComplete(jobId));
+      finishInterview(true);
     }
+  };
+
+  const clearAllTimers = () => {
+    if (totalTimerRef.current) clearInterval(totalTimerRef.current);
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+    if (interactionTimerRef.current) clearInterval(interactionTimerRef.current);
+  };
+
+  const finishInterview = async (skipped: boolean) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    setIsFinishing(true);
+    try {
+      // Ensure timers and interactions are stopped to prevent re-entry
+      clearAllTimers();
+      setHasInteracted(true);
+      // Stop any TTS playback and cleanup
+      if (ttsAudioRef.current) {
+        try { ttsAudioRef.current.pause(); } catch { }
+        ttsAudioRef.current = null;
+      }
+      if (ttsObjectUrlRef.current) {
+        URL.revokeObjectURL(ttsObjectUrlRef.current);
+        ttsObjectUrlRef.current = null;
+      }
+      // Stop recording if active
+      if (isRecordingAudio) {
+        stopAudioRecording();
+      }
+      // Persist final response state
+      persistCurrentUserResponse(Boolean(skipped));
+      // Await scoring/learning so LearningPath has data ready
+      await submitScores();
+    } catch { }
+    finally {
+      setIsFinishing(false);
+    }
+    onComplete(jobId);
   };
 
   const toggleRecording = () => {
@@ -646,8 +693,19 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
           </div>
         )}
 
+        {/* Finishing Screen */}
+        {isFinishing && (
+          <div className="flex flex-col items-center justify-center py-24">
+            <Loader2 className="w-10 h-10 animate-spin mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Scoring your interview</h3>
+            <p className="text-muted-foreground text-center max-w-md">
+              We're computing your scores and generating a personalized learning plan...
+            </p>
+          </div>
+        )}
+
         {/* Main Interview Content */}
-        {!loading && !error && jobData && interviewData && (
+        {!isFinishing && !loading && !error && jobData && interviewData && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Left: Question Display */}
             <Card className="h-fit">
