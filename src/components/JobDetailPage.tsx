@@ -1,54 +1,76 @@
-import { ArrowLeft, MapPin, Briefcase, FileText, Mic } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { ArrowLeft, MapPin, Briefcase, FileText, Mic, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Progress } from "./ui/progress";
+import { jobApiService, JobAnalysisResponse } from "../services/jobApi";
+
+interface Job {
+  id: string;
+  title: string;
+  company: string;
+  logo: string;
+  location: string;
+  remote: boolean;
+  skills: string[];
+  description: string;
+  matchScore: number;
+  applyLink?: string;
+  employmentType?: string;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  salaryCurrency?: string | null;
+  salaryPeriod?: string;
+}
 
 interface JobDetailPageProps {
   jobId: string;
+  jobData?: Job;
   onBack: () => void;
-  onStartInterview: (jobId: string) => void;
-  onTailorResume: (jobId: string) => void;
+  onStartInterview: (jobId: string, jobData?: Job) => void;
+  onTailorResume: (jobId: string, jobData?: Job) => void;
 }
 
-const jobDetails: Record<string, any> = {
-  "1": {
-    title: "Senior Frontend Developer",
-    company: "TechCorp Inc",
-    logo: "https://images.unsplash.com/photo-1549924231-f129b911e442?w=100&h=100&fit=crop",
-    location: "San Francisco, CA",
-    remote: true,
-    skills: ["React", "TypeScript", "Tailwind CSS", "Next.js", "Redux"],
-    description: "We're looking for a Senior Frontend Developer to join our innovative team. You'll be responsible for building next-generation web applications that serve millions of users worldwide. The ideal candidate has a strong background in React and TypeScript, with a passion for creating beautiful, performant user interfaces.\n\nYou'll work closely with our design team to implement pixel-perfect UIs, collaborate with backend engineers to build robust APIs, and mentor junior developers. We value clean code, testing, and continuous improvement.",
-    requirements: [
-      "5+ years of experience in frontend development",
-      "Expert knowledge of React and TypeScript",
-      "Experience with modern build tools and CI/CD",
-      "Strong understanding of web performance optimization",
-      "Excellent communication skills"
-    ],
-    matchScore: 92
-  },
-  "2": {
-    title: "Full Stack Engineer",
-    company: "StartupXYZ",
-    logo: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=100&h=100&fit=crop",
-    location: "New York, NY",
-    remote: false,
-    skills: ["Node.js", "React", "PostgreSQL", "AWS", "Docker"],
-    description: "Join a fast-growing startup revolutionizing the finance industry. As a Full Stack Engineer, you'll own features from conception to deployment.",
-    requirements: [
-      "3+ years of full stack development",
-      "Proficiency in Node.js and React",
-      "Database design experience",
-      "Cloud infrastructure knowledge"
-    ],
-    matchScore: 85
-  }
-};
+export function JobDetailPage({ jobId, jobData, onBack, onStartInterview, onTailorResume }: JobDetailPageProps) {
+  const [jobAnalysis, setJobAnalysis] = useState<JobAnalysisResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume }: JobDetailPageProps) {
-  const job = jobDetails[jobId] || jobDetails["1"];
+  // Use jobData if available, otherwise fallback to basic info
+  const job = jobData || {
+    id: jobId,
+    title: "Loading...",
+    company: "Loading...",
+    logo: "",
+    location: "Loading...",
+    remote: false,
+    skills: [],
+    description: "Loading job details...",
+    matchScore: 0
+  };
+
+  // Fetch job analysis when component mounts or jobData changes
+  useEffect(() => {
+    if (jobData?.description) {
+      fetchJobAnalysis(jobData.description);
+    }
+  }, [jobData]);
+
+  const fetchJobAnalysis = async (jobDescription: string) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const analysis = await jobApiService.analyzeJob(jobDescription);
+      setJobAnalysis(analysis);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to analyze job");
+      console.error("Error analyzing job:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -70,10 +92,14 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
             <Card>
               <CardHeader>
                 <div className="flex items-start gap-4">
-                  <img 
-                    src={job.logo} 
+                  <img
+                    src={job.logo}
                     alt={job.company}
                     className="w-16 h-16 rounded-lg object-cover"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(job.company)}&background=random`;
+                    }}
                   />
                   <div className="flex-1">
                     <CardTitle className="mb-2">{job.title}</CardTitle>
@@ -85,6 +111,9 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                       </div>
                       {job.remote && (
                         <Badge variant="secondary">Remote</Badge>
+                      )}
+                      {job.employmentType && (
+                        <Badge variant="outline">{job.employmentType}</Badge>
                       )}
                     </div>
                   </div>
@@ -98,9 +127,42 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                 <CardTitle>Job Description</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <p className="whitespace-pre-line text-muted-foreground">
-                  {job.description}
-                </p>
+                {loading ? (
+                  <div className="space-y-2">
+                    <div className="h-4 bg-gray-200 rounded animate-pulse"></div>
+                    <div className="h-4 bg-gray-200 rounded animate-pulse w-3/4"></div>
+                    <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2"></div>
+                  </div>
+                ) : error ? (
+                  <div className="text-red-600">
+                    <p>Error loading job analysis: {error}</p>
+                    <Button
+                      onClick={() => jobData?.description && fetchJobAnalysis(jobData.description)}
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                    >
+                      Try Again
+                    </Button>
+                  </div>
+                ) : jobAnalysis ? (
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold mb-2">Summary</h4>
+                      <p className="text-muted-foreground">{jobAnalysis.description_summary}</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold mb-2">Full Description</h4>
+                      <p className="whitespace-pre-line text-muted-foreground">
+                        {job.description}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-line text-muted-foreground">
+                    {job.description}
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -110,14 +172,27 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                 <CardTitle>Requirements</CardTitle>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-2">
-                  {job.requirements.map((req: string, idx: number) => (
-                    <li key={idx} className="flex gap-2">
-                      <span className="text-primary mt-1">•</span>
-                      <span className="text-muted-foreground">{req}</span>
-                    </li>
-                  ))}
-                </ul>
+                {loading ? (
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex gap-2">
+                        <div className="w-2 h-2 bg-gray-200 rounded-full animate-pulse mt-2"></div>
+                        <div className="h-4 bg-gray-200 rounded animate-pulse flex-1"></div>
+                      </div>
+                    ))}
+                  </div>
+                ) : jobAnalysis?.requirements ? (
+                  <ul className="space-y-2">
+                    {jobAnalysis.requirements.map((req: string, idx: number) => (
+                      <li key={idx} className="flex gap-2">
+                        <span className="text-primary mt-1">•</span>
+                        <span className="text-muted-foreground">{req}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-muted-foreground">No specific requirements available.</p>
+                )}
               </CardContent>
             </Card>
 
@@ -127,13 +202,21 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                 <CardTitle>Required Skills</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {job.skills.map((skill: string, idx: number) => (
-                    <Badge key={idx} variant="outline">
-                      {skill}
-                    </Badge>
-                  ))}
-                </div>
+                {loading ? (
+                  <div className="flex flex-wrap gap-2">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className="h-6 bg-gray-200 rounded animate-pulse w-20"></div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(jobAnalysis?.required_skills || job.skills).map((skill: string, idx: number) => (
+                      <Badge key={idx} variant="outline">
+                        {skill}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -155,10 +238,10 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                   </div>
                   <Progress value={job.matchScore} className="h-2" />
                 </div>
-                <Button 
-                  className="w-full" 
+                <Button
+                  className="w-full"
                   variant="outline"
-                  onClick={() => onTailorResume(jobId)}
+                  onClick={() => onTailorResume(jobId, job)}
                 >
                   <FileText className="w-4 h-4 mr-2" />
                   Tailor Resume
@@ -184,9 +267,9 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                     </div>
                   </div>
                 </div>
-                <Button 
-                  className="w-full" 
-                  onClick={() => onStartInterview(jobId)}
+                <Button
+                  className="w-full"
+                  onClick={() => onStartInterview(jobId, job)}
                 >
                   <Briefcase className="w-4 h-4 mr-2" />
                   Start Mock Interview
@@ -200,9 +283,21 @@ export function JobDetailPage({ jobId, onBack, onStartInterview, onTailorResume 
                 <CardTitle>Ready to Apply?</CardTitle>
               </CardHeader>
               <CardContent>
-                <Button className="w-full" variant="default">
-                  Apply Now
-                </Button>
+                {job.applyLink ? (
+                  <Button className="w-full" variant="default" asChild>
+                    <a
+                      href={job.applyLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Apply Now
+                    </a>
+                  </Button>
+                ) : (
+                  <Button className="w-full" variant="default" disabled>
+                    Apply Now
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>

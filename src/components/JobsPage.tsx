@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { Search, MapPin, Briefcase } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Search, MapPin, Briefcase, Loader2 } from "lucide-react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { jobApiService, JobApiResponse } from "../services/jobApi";
 
 interface Job {
   id: string;
@@ -16,94 +17,108 @@ interface Job {
   skills: string[];
   description: string;
   matchScore: number;
+  applyLink?: string;
+  employmentType?: string;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  salaryCurrency?: string | null;
+  salaryPeriod?: string;
 }
 
 interface JobsPageProps {
-  onJobClick: (jobId: string) => void;
+  onJobClick: (jobId: string, jobData?: Job) => void;
 }
 
-const mockJobs: Job[] = [
-  {
-    id: "1",
-    title: "Senior Frontend Developer",
-    company: "TechCorp Inc",
-    logo: "https://images.unsplash.com/photo-1549924231-f129b911e442?w=100&h=100&fit=crop",
-    location: "San Francisco, CA",
-    remote: true,
-    skills: ["React", "TypeScript", "Tailwind CSS"],
-    description: "Build next-generation web applications with our innovative team.",
-    matchScore: 92
-  },
-  {
-    id: "2",
-    title: "Full Stack Engineer",
-    company: "StartupXYZ",
-    logo: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=100&h=100&fit=crop",
-    location: "New York, NY",
-    remote: false,
-    skills: ["Node.js", "React", "PostgreSQL"],
-    description: "Join a fast-growing startup revolutionizing the finance industry.",
-    matchScore: 85
-  },
-  {
-    id: "3",
-    title: "React Developer",
-    company: "Digital Solutions",
-    logo: "https://images.unsplash.com/photo-1572044162444-ad60f128bdea?w=100&h=100&fit=crop",
-    location: "Austin, TX",
-    remote: true,
-    skills: ["React", "JavaScript", "Redux"],
-    description: "Create beautiful user interfaces for enterprise clients.",
-    matchScore: 88
-  },
-  {
-    id: "4",
-    title: "Frontend Architect",
-    company: "MegaCorp",
-    logo: "https://images.unsplash.com/photo-1551836022-deb4988cc6c0?w=100&h=100&fit=crop",
-    location: "Seattle, WA",
-    remote: true,
-    skills: ["React", "Vue.js", "Web Performance"],
-    description: "Lead frontend architecture decisions for global products.",
-    matchScore: 78
-  },
-  {
-    id: "5",
-    title: "UI Engineer",
-    company: "DesignHub",
-    logo: "https://images.unsplash.com/photo-1516321497487-e288fb19713f?w=100&h=100&fit=crop",
-    location: "Los Angeles, CA",
-    remote: false,
-    skills: ["React", "CSS", "Figma"],
-    description: "Bridge the gap between design and development.",
-    matchScore: 81
-  },
-  {
-    id: "6",
-    title: "JavaScript Developer",
-    company: "WebWorks",
-    logo: "https://images.unsplash.com/photo-1553484771-371a605b060b?w=100&h=100&fit=crop",
-    location: "Boston, MA",
-    remote: true,
-    skills: ["JavaScript", "React", "Node.js"],
-    description: "Build scalable web applications for diverse clients.",
-    matchScore: 75
-  }
-];
+// Helper function to transform API response to Job interface
+const transformApiJobToJob = (apiJob: JobApiResponse): Job => {
+  // Extract skills from job description (simple keyword matching)
+  const commonSkills = ['React', 'JavaScript', 'TypeScript', 'Node.js', 'Python', 'Java', 'CSS', 'HTML', 'SQL', 'Git'];
+  const skills = commonSkills.filter(skill =>
+    apiJob.job_description.toLowerCase().includes(skill.toLowerCase())
+  );
+
+  // Determine if job is remote based on description
+  const isRemote = apiJob.job_description.toLowerCase().includes('remote') ||
+    apiJob.job_description.toLowerCase().includes('work from home');
+
+  // Generate a mock match score (in real app, this would be calculated based on user profile)
+  const matchScore = Math.floor(Math.random() * 30) + 70; // 70-100 range
+
+  return {
+    id: apiJob.job_id,
+    title: apiJob.job_title,
+    company: apiJob.employer_name,
+    logo: `https://images.unsplash.com/photo-${Math.floor(Math.random() * 1000000000)}?w=100&h=100&fit=crop`, // Random placeholder
+    location: `${apiJob.job_city}, ${apiJob.job_state}`,
+    remote: isRemote,
+    skills: skills.length > 0 ? skills : ['General Software Development'],
+    description: apiJob.job_description,
+    matchScore,
+    applyLink: apiJob.job_apply_link,
+    employmentType: apiJob.job_employment_type,
+    salaryMin: apiJob.job_salary_min,
+    salaryMax: apiJob.job_salary_max,
+    salaryCurrency: apiJob.job_salary_currency,
+    salaryPeriod: apiJob.job_salary_period
+  };
+};
 
 export function JobsPage({ onJobClick }: JobsPageProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [locationFilter, setLocationFilter] = useState("all");
   const [remoteFilter, setRemoteFilter] = useState("all");
-  
-  const filteredJobs = mockJobs.filter(job => {
-    const matchesSearch = job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         job.skills.some(skill => skill.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesRemote = remoteFilter === "all" || 
-                         (remoteFilter === "remote" && job.remote) ||
-                         (remoteFilter === "onsite" && !job.remote);
-    return matchesSearch && matchesRemote;
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch jobs from API
+  const fetchJobs = async (query: string = "") => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const apiJobs = await jobApiService.searchJobs({
+        query: query || "Software Engineer",
+        page: 1,
+        num_pages: 1,
+        country: "us",
+        date_posted: "today",
+        job_requirements: "under_3_years_experience"
+      });
+
+      const transformedJobs = apiJobs.map(transformApiJobToJob);
+      setJobs(transformedJobs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch jobs");
+      console.error("Error fetching jobs:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial load
+  useEffect(() => {
+    fetchJobs();
+  }, []);
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchTerm.trim()) {
+        fetchJobs(searchTerm);
+      } else {
+        fetchJobs();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm]);
+
+  const filteredJobs = jobs.filter(job => {
+    const matchesRemote = remoteFilter === "all" ||
+      (remoteFilter === "remote" && job.remote) ||
+      (remoteFilter === "onsite" && !job.remote);
+    return matchesRemote;
   });
 
   return (
@@ -135,61 +150,126 @@ export function JobsPage({ onJobClick }: JobsPageProps) {
 
       {/* Results Count */}
       <div className="mb-4 text-muted-foreground">
-        {filteredJobs.length} {filteredJobs.length === 1 ? 'job' : 'jobs'} found
+        {loading ? (
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Loading jobs...</span>
+          </div>
+        ) : (
+          `${filteredJobs.length} ${filteredJobs.length === 1 ? 'job' : 'jobs'} found`
+        )}
       </div>
 
-      {/* Job Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredJobs.map((job) => (
-          <Card key={job.id} className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardHeader>
-              <div className="flex items-start gap-4 mb-2">
-                <img 
-                  src={job.logo} 
-                  alt={job.company}
-                  className="w-12 h-12 rounded-lg object-cover"
-                />
-                <div className="flex-1 min-w-0">
-                  <CardTitle className="mb-1 truncate">{job.title}</CardTitle>
-                  <CardDescription className="truncate">{job.company}</CardDescription>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                <MapPin className="w-3 h-3" />
-                <span className="truncate">{job.location}</span>
-                {job.remote && (
-                  <Badge variant="secondary" className="ml-auto">Remote</Badge>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground line-clamp-2">
-                {job.description}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {job.skills.slice(0, 3).map((skill, idx) => (
-                  <Badge key={idx} variant="outline" className="text-xs">
-                    {skill}
-                  </Badge>
-                ))}
-              </div>
-              <div className="flex items-center justify-between pt-2">
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Match: </span>
-                  <span className={job.matchScore >= 85 ? "text-green-600" : "text-orange-600"}>
-                    {job.matchScore}%
-                  </span>
-                </div>
-                <Button onClick={() => onJobClick(job.id)} size="sm">
-                  View Details
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* Error State */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-red-600">Error: {error}</p>
+          <Button
+            onClick={() => fetchJobs(searchTerm)}
+            variant="outline"
+            size="sm"
+            className="mt-2"
+          >
+            Try Again
+          </Button>
+        </div>
+      )}
 
-      {filteredJobs.length === 0 && (
+      {/* Job List */}
+      {!loading && !error && (
+        <div className="space-y-2">
+          {filteredJobs.map((job) => (
+            <Card key={job.id} className="hover:shadow-md transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-4">
+                  {/* Company Logo */}
+                  <div className="flex-shrink-0">
+                    <img
+                      src={job.logo}
+                      alt={job.company}
+                      className="w-12 h-12 rounded-lg object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(job.company)}&background=random`;
+                      }}
+                    />
+                  </div>
+
+                  {/* Job Title */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-lg truncate">{job.title}</h3>
+                    <p className="text-sm text-muted-foreground truncate">{job.company}</p>
+                    {job.employmentType && (
+                      <p className="text-xs text-muted-foreground">{job.employmentType}</p>
+                    )}
+                  </div>
+
+                  {/* Location */}
+                  <div className="flex items-center gap-2 text-muted-foreground min-w-0 flex-shrink-0">
+                    <MapPin className="w-4 h-4" />
+                    <span className="truncate">{job.location}</span>
+                  </div>
+
+                  {/* Employment Type */}
+                  <div className="flex-shrink-0">
+                    <Badge variant={job.remote ? "default" : "secondary"}>
+                      {job.remote ? "Remote" : "On-site"}
+                    </Badge>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex-shrink-0 flex gap-2">
+                    <Button
+                      onClick={() => onJobClick(job.id, job)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      View Job
+                    </Button>
+                    <Button
+                      size="sm"
+                      asChild
+                    >
+                      <a
+                        href={job.applyLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Apply
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Loading State */}
+      {loading && (
+        <div className="space-y-2">
+          {[...Array(3)].map((_, i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-gray-200 rounded-lg"></div>
+                  <div className="flex-1">
+                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                    <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                  </div>
+                  <div className="h-3 bg-gray-200 rounded w-24"></div>
+                  <div className="h-6 bg-gray-200 rounded w-16"></div>
+                  <div className="h-8 bg-gray-200 rounded w-16"></div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && !error && filteredJobs.length === 0 && (
         <div className="text-center py-12">
           <Briefcase className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <p className="text-muted-foreground">No jobs found matching your criteria.</p>

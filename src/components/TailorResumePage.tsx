@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Download, Sparkles, Briefcase, MapPin, Upload, FileUp, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -14,43 +14,48 @@ import { improveSectionWithGemini } from "../lib/resumeImprove";
 import { downloadResumePdfServer } from "../lib/pdfExport";
 import { getStoredResumeSections, setStoredResumeSections } from "../lib/resumeStore";
 
+interface Job {
+  id: string;
+  title: string;
+  company: string;
+  logo: string;
+  location: string;
+  remote: boolean;
+  skills: string[];
+  description: string;
+  matchScore: number;
+  applyLink?: string;
+  employmentType?: string;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  salaryCurrency?: string | null;
+  salaryPeriod?: string;
+}
+
 interface TailorResumePageProps {
   jobId: string;
+  jobData?: Job;
   onBack: () => void;
 }
 
-const jobDetails: Record<string, any> = {
-  "1": {
-    title: "Senior Frontend Developer",
-    company: "TechCorp Inc",
-    logo: "https://images.unsplash.com/photo-1549924231-f129b911e442?w=100&h=100&fit=crop",
-    location: "San Francisco, CA",
-    remote: true,
-    skills: ["React", "TypeScript", "Tailwind CSS", "Next.js", "Redux"],
-    description: "We're looking for a Senior Frontend Developer to join our innovative team. You'll be responsible for building next-generation web applications that serve millions of users worldwide. The ideal candidate has a strong background in React and TypeScript, with a passion for creating beautiful, performant user interfaces.\n\nYou'll work closely with our design team to implement pixel-perfect UIs, collaborate with backend engineers to build robust APIs, and mentor junior developers. We value clean code, testing, and continuous improvement.",
-    requirements: [
-      "5+ years of experience in frontend development",
-      "Expert knowledge of React and TypeScript",
-      "Experience with modern build tools and CI/CD",
-      "Strong understanding of web performance optimization",
-      "Excellent communication skills"
-    ],
-  },
-  "2": {
-    title: "Full Stack Engineer",
-    company: "StartupXYZ",
-    logo: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=100&h=100&fit=crop",
-    location: "New York, NY",
-    remote: false,
-    skills: ["Node.js", "React", "PostgreSQL", "AWS", "Docker"],
-    description: "Join a fast-growing startup revolutionizing the finance industry. As a Full Stack Engineer, you'll own features from conception to deployment.",
-    requirements: [
-      "3+ years of full stack development",
-      "Proficiency in Node.js and React",
-      "Database design experience",
-      "Cloud infrastructure knowledge"
-    ],
+// Helper function to extract requirements from job description
+const extractRequirementsFromDescription = (description: string): string[] => {
+  // Simple extraction - look for bullet points or numbered lists
+  const lines = description.split('\n');
+  const requirements: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.match(/^[\d\-\•\*]\s+/) || trimmed.match(/^[A-Z][^.!?]*[.!?]$/)) {
+      requirements.push(trimmed.replace(/^[\d\-\•\*]\s+/, ''));
+    }
   }
+
+  return requirements.length > 0 ? requirements : [
+    "Experience in relevant technologies",
+    "Strong problem-solving skills",
+    "Good communication abilities"
+  ];
 };
 
 const initialSections: ResumeSection[] = [
@@ -76,8 +81,26 @@ const initialSections: ResumeSection[] = [
   }
 ];
 
-export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
-  const job = jobDetails[jobId] || jobDetails["1"];
+export function TailorResumePage({ jobId, jobData, onBack }: TailorResumePageProps) {
+  // Use jobData if available, otherwise create a fallback
+  const job = jobData || {
+    id: jobId,
+    title: "Loading...",
+    company: "Loading...",
+    logo: "",
+    location: "Loading...",
+    remote: false,
+    skills: [],
+    description: "Loading job details...",
+    matchScore: 0
+  };
+
+  // Extract requirements from job description if not provided
+  const requirements = jobData?.description ? extractRequirementsFromDescription(jobData.description) : [
+    "Experience in relevant technologies",
+    "Strong problem-solving skills",
+    "Good communication abilities"
+  ];
   const [sections, setSections] = useState<ResumeSection[]>(() => getStoredResumeSections() || initialSections);
   const [isTailoring, setIsTailoring] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -199,7 +222,7 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
     const resumeText = sections
       .map(section => `${section.title.toUpperCase()}\n${section.content}`)
       .join('\n\n');
-    
+
     const blob = new Blob([resumeText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -214,7 +237,7 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
     try {
       const stored = localStorage.getItem("profile");
       if (stored) profile = JSON.parse(stored);
-    } catch {}
+    } catch { }
     const safe = (s: string) => s.replace(/[^a-z0-9-_]+/gi, "-").replace(/-+/g, "-").replace(/(^-|-$)/g, "").toLowerCase();
     const fileName = `resume-${safe(job.company)}-${safe(job.title)}.pdf`;
     downloadResumePdfServer(
@@ -239,7 +262,7 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
                 <Upload className="w-4 h-4 mr-2" />
                 Upload Resume
               </Button>
-              <Button 
+              <Button
                 onClick={handleAutoTailor}
                 disabled={isTailoring}
               >
@@ -271,14 +294,26 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
                 </p>
               </div>
 
+              {!jobData && (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-yellow-800 text-sm">
+                    Job details are loading. Some features may be limited until data is available.
+                  </p>
+                </div>
+              )}
+
               {/* Job Info Card */}
               <Card>
                 <CardHeader>
                   <div className="flex items-start gap-3">
-                    <img 
-                      src={job.logo} 
+                    <img
+                      src={job.logo}
                       alt={job.company}
                       className="w-12 h-12 rounded-lg object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(job.company)}&background=random`;
+                      }}
                     />
                     <div className="flex-1 min-w-0">
                       <CardTitle className="mb-1">{job.title}</CardTitle>
@@ -291,9 +326,14 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
                     <MapPin className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                     <span>{job.location}</span>
                   </div>
-                  {job.remote && (
-                    <Badge variant="secondary">Remote</Badge>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {job.remote && (
+                      <Badge variant="secondary">Remote</Badge>
+                    )}
+                    {job.employmentType && (
+                      <Badge variant="outline">{job.employmentType}</Badge>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 
@@ -318,7 +358,7 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
                 </CardHeader>
                 <CardContent>
                   <ul className="space-y-2">
-                    {job.requirements.map((req: string, idx: number) => (
+                    {requirements.map((req: string, idx: number) => (
                       <li key={idx} className="flex gap-2 text-sm">
                         <span className="text-primary mt-0.5">•</span>
                         <span className="text-muted-foreground">{req}</span>
@@ -355,7 +395,7 @@ export function TailorResumePage({ jobId, onBack }: TailorResumePageProps) {
               </p>
             </div>
 
-            <ResumeEditor 
+            <ResumeEditor
               sections={sections}
               onSectionsChange={setSections}
               jobTitle={job.title}
