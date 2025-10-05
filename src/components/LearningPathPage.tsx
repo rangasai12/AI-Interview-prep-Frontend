@@ -3,6 +3,7 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Progress } from "./ui/progress";
+import { useEffect, useMemo, useState } from "react";
 
 interface LearningPathPageProps {
   jobId: string;
@@ -72,6 +73,36 @@ const feedbackData = {
 };
 
 export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningPathPageProps) {
+  const [scores, setScores] = useState<any | null>(null);
+  const [plan, setPlan] = useState<any | null>(null);
+
+  useEffect(() => {
+    try {
+      const storedScores = localStorage.getItem('lastLearningScores');
+      const storedPlan = localStorage.getItem('lastLearningPlan');
+      if (storedScores) setScores(JSON.parse(storedScores));
+      if (storedPlan) setPlan(JSON.parse(storedPlan));
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  const overallPercent = useMemo(() => {
+    if (!scores?.overall) return null;
+    const { total_score, total_max } = scores.overall;
+    if (!total_max) return 0;
+    return (total_score / total_max) * 100;
+  }, [scores]);
+
+  const getPriorityBadge = (priority?: string) => {
+    const base = "px-2 py-0.5 rounded text-xs font-medium";
+    switch ((priority || '').toLowerCase()) {
+      case 'high': return <span className={`${base} bg-red-500/10 text-red-700 dark:text-red-400`}>High</span>;
+      case 'medium': return <span className={`${base} bg-orange-500/10 text-orange-700 dark:text-orange-400`}>Medium</span>;
+      case 'low': return <span className={`${base} bg-green-500/10 text-green-700 dark:text-green-400`}>Low</span>;
+      default: return null;
+    }
+  };
   const getTypeIcon = (type: string) => {
     switch (type) {
       case "video": return <Video className="w-4 h-4" />;
@@ -111,7 +142,7 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
           </p>
         </div>
 
-        {/* Overall Score */}
+        {/* Overall Score (dynamic if available) */}
         <Card className="mb-8">
           <CardHeader>
             <CardTitle>Interview Performance</CardTitle>
@@ -121,14 +152,14 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="text-4xl">
-                  <span className={feedbackData.overallScore >= 70 ? "text-green-600" : "text-orange-600"}>
-                    {feedbackData.overallScore}%
+                  <span className={(overallPercent ?? feedbackData.overallScore) >= 70 ? "text-green-600" : "text-orange-600"}>
+                    {Math.round(overallPercent ?? feedbackData.overallScore)}%
                   </span>
                 </div>
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <TrendingUp className="w-4 h-4 text-green-600" />
-                    <span className="text-sm">Good performance!</span>
+                    <span className="text-sm">{(overallPercent ?? feedbackData.overallScore) >= 70 ? 'Good performance!' : 'Keep improving!'}</span>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     You're on the right track. Focus on the areas below to improve further.
@@ -136,9 +167,126 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
                 </div>
               </div>
             </div>
-            <Progress value={feedbackData.overallScore} className="h-2" />
+            <Progress value={overallPercent ?? feedbackData.overallScore} className="h-2" />
           </CardContent>
         </Card>
+
+        {/* Overview */}
+        {plan?.overview && (
+          <Card className="mb-8">
+            <CardHeader>
+              <CardTitle>Overview</CardTitle>
+              <CardDescription>{plan.job_title ?? scores?.job_title}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{plan.overview}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Quick Wins */}
+        {Array.isArray(plan?.quick_wins) && plan.quick_wins.length > 0 && (
+          <Card className="mb-8">
+            <CardHeader>
+              <CardTitle>Quick Wins</CardTitle>
+              <CardDescription>Actionable steps to start immediately</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2 list-disc ml-5">
+                {plan.quick_wins.map((win: string, idx: number) => (
+                  <li key={idx} className="text-sm">{win}</li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Topics */}
+        {Array.isArray(plan?.topics) && plan.topics.length > 0 && (
+          <div className="space-y-6 mb-8">
+            {plan.topics.map((topic: any, idx: number) => (
+              <Card key={idx} className="">
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="mb-1">{topic.topic}</CardTitle>
+                      <CardDescription className="capitalize">Skill Area: {topic.skill_area}</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {getPriorityBadge(topic.priority)}
+                      {typeof topic.target_score === 'number' && (
+                        <Badge variant="outline">Target: {Math.round(topic.target_score)}%</Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {topic.why && (
+                    <div>
+                      <h3 className="text-sm font-medium mb-1">Why this matters</h3>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{topic.why}</p>
+                    </div>
+                  )}
+
+                  {Array.isArray(topic.actions) && topic.actions.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-medium mb-1">Actions</h3>
+                      <ul className="space-y-1 list-disc ml-5">
+                        {topic.actions.map((a: string, i: number) => (
+                          <li key={i} className="text-sm">{a}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {Array.isArray(topic.practice_tasks) && topic.practice_tasks.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-medium mb-1">Practice Tasks</h3>
+                      <ul className="space-y-1 list-disc ml-5">
+                        {topic.practice_tasks.map((t: string, i: number) => (
+                          <li key={i} className="text-sm">{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {Array.isArray(topic.resources) && topic.resources.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-medium mb-2">Resources</h3>
+                      <div className="space-y-3">
+                        {topic.resources.map((resource: any, rIdx: number) => (
+                          <div key={rIdx} className="p-3 rounded-md border bg-background">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge variant="outline" className="capitalize">{resource.type ?? 'resource'}</Badge>
+                                  {resource.provider && (
+                                    <span className="text-xs text-muted-foreground">{resource.provider}</span>
+                                  )}
+                                </div>
+                                <div className="font-medium break-words">{resource.title}</div>
+                                {resource.url && (
+                                  <a href={resource.url} target="_blank" rel="noreferrer" className="text-xs text-primary underline break-all">{resource.url}</a>
+                                )}
+                                {resource.cost || resource.est_time_hours ? (
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    {resource.cost && <span>Cost: {resource.cost}</span>}
+                                    {resource.cost && resource.est_time_hours && <span> • </span>}
+                                    {resource.est_time_hours && <span>Est. Time: {resource.est_time_hours}h</span>}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
         {/* Strengths and Improvements */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -183,7 +331,7 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
           </Card>
         </div>
 
-        {/* Learning Resources */}
+        {/* Learning Resources (fallback when no topic resources) */}
         <div className="mb-8">
           <div className="mb-4">
             <h2 className="mb-1">Recommended Resources</h2>
@@ -193,19 +341,21 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
           </div>
 
           <div className="space-y-4">
-            {feedbackData.resources.map((resource) => (
-              <Card key={resource.id} className="hover:shadow-lg transition-shadow">
+            {((plan?.resources && plan.resources.length > 0) ? plan.resources : feedbackData.resources).map((resource: any) => (
+              <Card key={resource.id ?? resource.title} className="hover:shadow-lg transition-shadow">
                 <CardContent className="p-6">
                   <div className="flex items-start gap-4">
                     <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                      {getTypeIcon(resource.type)}
+                      {getTypeIcon(resource.type ?? 'article')}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-4 mb-2">
                         <h3 className="break-words">{resource.title}</h3>
-                        <Badge className={getDifficultyColor(resource.difficulty)}>
-                          {resource.difficulty}
-                        </Badge>
+                        {resource.difficulty && (
+                          <Badge className={getDifficultyColor(resource.difficulty)}>
+                            {resource.difficulty}
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground mb-3">
                         {resource.description}
@@ -213,13 +363,15 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-4 text-sm text-muted-foreground">
                           <Badge variant="outline" className="capitalize">
-                            {resource.type}
+                            {resource.type ?? 'article'}
                           </Badge>
-                          <span>{resource.duration}</span>
+                          {resource.duration && <span>{resource.duration}</span>}
                         </div>
-                        <Button size="sm" variant="outline">
-                          View Resource
-                        </Button>
+                        {resource.link && (
+                          <Button asChild size="sm" variant="outline">
+                            <a href={resource.link} target="_blank" rel="noreferrer">View Resource</a>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -228,6 +380,23 @@ export function LearningPathPage({ jobId, onBack, onRetakeInterview }: LearningP
             ))}
           </div>
         </div>
+
+        {/* Study Schedule */}
+        {Array.isArray(plan?.study_schedule) && plan.study_schedule.length > 0 && (
+          <Card className="mb-8">
+            <CardHeader>
+              <CardTitle>Study Schedule</CardTitle>
+              <CardDescription>Suggested pacing to reach your targets</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2 list-disc ml-5">
+                {plan.study_schedule.map((s: string, idx: number) => (
+                  <li key={idx} className="text-sm">{s}</li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
 
         {/* CTA */}
         <Card>

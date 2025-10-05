@@ -14,14 +14,17 @@ type Page = "jobs" | "job-detail" | "mock-interview" | "learning-path" | "resume
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("jobs");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedJobData, setSelectedJobData] = useState<any>(null);
 
-  const handleJobClick = (jobId: string) => {
+  const handleJobClick = (jobId: string, jobData?: any) => {
     setSelectedJobId(jobId);
+    setSelectedJobData(jobData);
     setCurrentPage("job-detail");
   };
 
-  const handleStartInterview = (jobId: string) => {
+  const handleStartInterview = (jobId: string, jobData?: any) => {
     setSelectedJobId(jobId);
+    setSelectedJobData(jobData);
     setCurrentPage("mock-interview");
   };
 
@@ -33,6 +36,7 @@ export default function App() {
   const handleBackToJobs = () => {
     setCurrentPage("jobs");
     setSelectedJobId(null);
+    setSelectedJobData(null);
   };
 
   const handleBackToJobDetail = () => {
@@ -52,41 +56,47 @@ export default function App() {
     setCurrentPage("resume");
   };
 
+
   const handleGoToApplications = () => {
     setCurrentPage("applications");
   };
 
-  const handleTailorResume = (jobId: string) => {
+
+  const handleTailorResume = (jobId: string, jobData?: any) => {
     setSelectedJobId(jobId);
+    setSelectedJobData(jobData);
     setCurrentPage("tailor-resume");
   };
 
   return (
     <div className="min-h-screen flex flex-col">
+
   {currentPage === "jobs" && <Header onProfileClick={handleGoToProfile} onApplicationsClick={handleGoToApplications} />}
       
       <main className="flex-1">
         {currentPage === "jobs" && (
           <JobsPage onJobClick={handleJobClick} />
         )}
-        
+
         {currentPage === "job-detail" && selectedJobId && (
           <JobDetailPage
             jobId={selectedJobId}
+            jobData={selectedJobData}
             onBack={handleBackToJobs}
             onStartInterview={handleStartInterview}
             onTailorResume={handleTailorResume}
           />
         )}
-        
+
         {currentPage === "mock-interview" && selectedJobId && (
           <MockInterviewPage
             jobId={selectedJobId}
+            jobData={selectedJobData}
             onBack={handleBackToJobDetail}
             onComplete={handleInterviewComplete}
           />
         )}
-        
+
         {currentPage === "learning-path" && selectedJobId && (
           <LearningPathPage
             jobId={selectedJobId}
@@ -96,8 +106,8 @@ export default function App() {
         )}
 
         {currentPage === "profile" && (
-          <ProfilePage 
-            onBack={handleBackToJobs} 
+          <ProfilePage
+            onBack={handleBackToJobs}
             onEditResume={handleGoToResume}
           />
         )}
@@ -109,6 +119,7 @@ export default function App() {
         {currentPage === "tailor-resume" && selectedJobId && (
           <TailorResumePage
             jobId={selectedJobId}
+            jobData={selectedJobData}
             onBack={handleBackToJobDetail}
           />
         )}
