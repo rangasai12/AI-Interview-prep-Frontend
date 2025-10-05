@@ -258,6 +258,8 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
     if (isRecordingAudio) {
       stopAudioRecording();
     }
+    // Persist user's response for the current question
+    persistCurrentUserResponse();
 
     if (interviewData && currentQuestionIndex < interviewData.questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
@@ -265,12 +267,23 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
       setCodeAnswer("");
       setTranscribedText("");
     } else {
-      onComplete(jobId);
+      // Submit scores payload before completing
+      submitScores().finally(() => onComplete(jobId));
     }
   };
 
   const handleSkip = () => {
-    handleNext();
+    // On skip, clear the current question response then move next
+    persistCurrentUserResponse(true);
+
+    if (interviewData && currentQuestionIndex < interviewData.questions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      setAnswer("");
+      setCodeAnswer("");
+      setTranscribedText("");
+    } else {
+      submitScores().finally(() => onComplete(jobId));
+    }
   };
 
   const toggleRecording = () => {
@@ -354,6 +367,130 @@ export function MockInterviewPage({ jobId, jobData, onBack, onComplete }: MockIn
       alert('Failed to transcribe audio. Please try again.');
     } finally {
       setIsTranscribing(false);
+    }
+  };
+
+  // Persist the user's response into interviewData for the current question
+  const persistCurrentUserResponse = (isSkip: boolean = false) => {
+    setInterviewData(prev => {
+      if (!prev) return prev;
+      const questionsCopy = [...prev.questions];
+      const q = { ...questionsCopy[currentQuestionIndex] };
+      if (isSkip) {
+        q.user_response = "";
+      } else {
+        q.user_response = q.kind === "coding" ? codeAnswer : answer;
+      }
+      questionsCopy[currentQuestionIndex] = q;
+      return { ...prev, questions: questionsCopy };
+    });
+  };
+
+  // Submit the full question set with user responses to scoring API
+  const submitScores = async () => {
+    if (!interviewData) return;
+    try {
+      const payload = {
+        question_set: {
+          job_title: interviewData.job_title,
+          summary: interviewData.summary,
+          questions: interviewData.questions.map(q => ({
+            question_id: q.question_id,
+            kind: q.kind,
+            text: q.text,
+            rationale: q.rationale,
+            rubric: q.rubric,
+            coding: q.coding,
+            user_response: q.user_response || ""
+          }))
+        }
+      };
+
+      const res = await fetch('http://127.0.0.1:8000/scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        console.error('Scores API error', res.status);
+        return;
+      }
+
+      // Read scores response
+      const scoresResponse = await res.json().catch(() => null);
+      if (scoresResponse) {
+        try {
+          // Persist for later pages
+          localStorage.setItem('lastScoresResponse', JSON.stringify(scoresResponse));
+
+          // Build learning request payload from scores and interview data
+          const items = Array.isArray(scoresResponse.items) ? scoresResponse.items : [];
+          // Build a quick lookup to fetch original question text by id
+          const idToQuestionText: Record<string, string> = {};
+          interviewData.questions.forEach(q => { idToQuestionText[q.question_id] = q.text; });
+
+          const learningItems = items.map((it: any) => {
+            const bullet = Array.isArray(it.bullet_evals) ? it.bullet_evals : [];
+            const rawScore = bullet.reduce((sum: number, b: any) => sum + (typeof b?.score === 'number' ? b.score : 0), 0);
+            const maxScore = bullet.length * 10.0;
+            const percent = maxScore > 0 ? (rawScore / maxScore) * 100.0 : 0.0;
+            const weight = 1.0;
+            return {
+              question_id: it.question_id,
+              kind: it.kind,
+              text: idToQuestionText[it.question_id] || '',
+              verdict: it.verdict || '',
+              raw_score: rawScore,
+              max_score: maxScore,
+              percent,
+              weight,
+              weighted_raw: rawScore * weight,
+              weighted_max: maxScore * weight,
+              bullet_evals: bullet,
+              feedback: it.feedback || '',
+              coding_review: it.coding_review || undefined
+            };
+          });
+
+          const totalRaw = learningItems.reduce((s, it) => s + (it.weighted_raw || 0), 0);
+          const totalMax = learningItems.reduce((s, it) => s + (it.weighted_max || 0), 0);
+          const overallPercent = totalMax > 0 ? (totalRaw / totalMax) * 100.0 : 0.0;
+
+          const learningRequest = {
+            scored_report: {
+              job_title: scoresResponse.job_title || interviewData.job_title,
+              overall: {
+                total_score: totalRaw,
+                total_max: totalMax,
+                percent: overallPercent
+              },
+              items: learningItems
+            },
+            threshold: 70.0,
+            budget_hours: 20.0,
+            max_resources: 6
+          };
+
+          const learnRes = await fetch('http://127.0.0.1:8000/learning', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(learningRequest)
+          });
+          if (!learnRes.ok) {
+            console.error('Learning API error', learnRes.status);
+            return;
+          }
+          const learningPlan = await learnRes.json().catch(() => null);
+          if (learningPlan) {
+            localStorage.setItem('lastLearningPlan', JSON.stringify(learningPlan));
+            localStorage.setItem('lastLearningScores', JSON.stringify(learningRequest.scored_report));
+          }
+        } catch (e) {
+          console.error('Failed to prepare/send learning request:', e);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to submit scores:', e);
     }
   };
 
