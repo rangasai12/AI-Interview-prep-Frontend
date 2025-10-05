@@ -7,8 +7,9 @@ import { LearningPathPage } from "./components/LearningPathPage";
 import { ResumePage } from "./components/ResumePage";
 import { ProfilePage } from "./components/ProfilePage";
 import { TailorResumePage } from "./components/TailorResumePage";
+import { ApplicationTrackingPage } from "./components/ApplicationTrackingPage";
 
-type Page = "jobs" | "job-detail" | "mock-interview" | "learning-path" | "resume" | "profile" | "tailor-resume";
+type Page = "jobs" | "job-detail" | "mock-interview" | "learning-path" | "resume" | "profile" | "tailor-resume" | "applications";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("jobs");
@@ -51,6 +52,10 @@ export default function App() {
     setCurrentPage("resume");
   };
 
+  const handleGoToApplications = () => {
+    setCurrentPage("applications");
+  };
+
   const handleTailorResume = (jobId: string) => {
     setSelectedJobId(jobId);
     setCurrentPage("tailor-resume");
@@ -58,7 +63,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {currentPage === "jobs" && <Header onProfileClick={handleGoToProfile} />}
+  {currentPage === "jobs" && <Header onProfileClick={handleGoToProfile} onApplicationsClick={handleGoToApplications} />}
       
       <main className="flex-1">
         {currentPage === "jobs" && (
@@ -106,6 +111,10 @@ export default function App() {
             jobId={selectedJobId}
             onBack={handleBackToJobDetail}
           />
+        )}
+
+        {currentPage === "applications" && (
+          <ApplicationTrackingPage onBack={handleBackToJobs} />
         )}
       </main>
     </div>
